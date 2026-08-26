@@ -422,15 +422,27 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
         if (motor[0].speed_target == 0.0f) {
-        /* 停止指令が来たら即座に目標速度を0にする(ドリフト防止) */
-          motor[0].now_speed_target = 0.0f;
-        } else if (motor[0].now_speed_target < motor[0].speed_target) {
-          motor[0].now_speed_target += 0.5f;
+        /* ドリフト防止 */
+          if (motor[0].now_speed_target < motor[0].speed_target) {
+            motor[0].now_speed_target += 0.7f;
+            if (motor[0].now_speed_target > motor[0].speed_target) {
+              motor[0].now_speed_target = motor[0].speed_target;
+            }
+          }
+          if (motor[0].now_speed_target > motor[0].speed_target) {
+            motor[0].now_speed_target -= 0.7f;
+            if (motor[0].now_speed_target < motor[0].speed_target) {
+              motor[0].now_speed_target = motor[0].speed_target;
+            }
+          }
+        } 
+        else if (motor[0].now_speed_target < motor[0].speed_target) {
+          motor[0].now_speed_target += 0.25f;
           if (motor[0].now_speed_target > motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
           }
         } else if (motor[0].now_speed_target > motor[0].speed_target) {
-          motor[0].now_speed_target -= 0.5f;
+          motor[0].now_speed_target -= 0.25f;
           if (motor[0].now_speed_target < motor[0].speed_target) {
             motor[0].now_speed_target = motor[0].speed_target;
           }
@@ -511,7 +523,7 @@ float locate_pid(volatile float output, float target, float p, float i, float d,
   }
 
   return input;
-  }
+}
 
 /*pid速度型*/
 float speed_pid(volatile float output, float target, float p, float i, float d, volatile float *low_pass_different_sum, volatile float *last_difference, volatile float *last_last_difference, volatile float last_input, volatile float *low_pass_derivative, int cutoff) {
@@ -961,6 +973,10 @@ int main(void)
     FDCAN_ProtocolStatusTypeDef pstatus;
     FDCAN_ErrorCountersTypeDef  ecounters;
     HAL_FDCAN_GetProtocolStatus(&hfdcan1, &pstatus);
+    if (pstatus.BusOff) {
+    __HAL_FDCAN_CLEAR_FLAG(&hfdcan1, FDCAN_FLAG_BUS_OFF);
+    HAL_FDCAN_Start(&hfdcan1);
+    }
     HAL_FDCAN_GetErrorCounters(&hfdcan1, &ecounters);
     printf("rx_ok=%lu BusOff=%d ErrPassive=%d TEC=%lu REC=%lu target=%d tim2_cnt=%d pid_mode=%d ctrl_mode=%d speed=%d angle=%u OC_FAULT=%d I_U=%d I_V=%d I_W=%d\r\n",
    rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
