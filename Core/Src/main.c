@@ -162,7 +162,7 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x303u
+#define CAN_MOTOR_CMD_BASE_ID  0x302u
 #define CAN_MOTOR_NUM          3u
 
 typedef struct __attribute__((packed)) {
@@ -276,7 +276,7 @@ static uint16_t spi_transfer_16(uint16_t tx)
     HAL_SPI_TransmitReceive(&hspi1, (uint8_t*)&tx, (uint8_t*)&rx, 1, HAL_MAX_DELAY);// 16ビット送受信
     HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET); // 通信終了
     
-    return rx;
+   return rx;
 }
 
 uint16_t as5047p_read_angle(void)
@@ -570,7 +570,7 @@ void measure_current(void) {
   current_w = ((float)raw_w - (float)offset_w) * magnification_conversion;
   current_v = -(current_u + current_w);
 
-  /* ★ 過電流保護: 各相電流の絶対値が閾値を超えたら即座にPWM停止 */
+  /*各相電流の絶対値が閾値を超えたら即座にPWM停止 */
   if (!overcurrent_fault &&
       (fabsf(current_u) > MAX_PHASE_CURRENT_A ||
        fabsf(current_v) > MAX_PHASE_CURRENT_A ||
