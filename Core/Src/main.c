@@ -139,6 +139,9 @@ static uint8_t stspin_clear_faults(void)
 #define opamp_gain 16.0  //cudemxで設定したPGAgainの値
 #define MAX_PHASE_CURRENT_A   7.0f
 #define drive_voltage 3.3  //マイコンの駆動電圧
+#define ENCODER_FAULT_THRESHOLD   30   // スコアがここまで貯まったら停止
+#define ENCODER_FAULT_SCORE_MAX   30   // スコアの上限
+
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
@@ -147,6 +150,9 @@ volatile int control_motor_mode[3] = {0, 0, 0};       //モーターの制御モ
 
 volatile uint32_t rx_ok_count = 0;
 static volatile uint32_t tim2_cnt = 0;
+
+volatile uint8_t encoder_fault = 0;
+static int16_t encoder_fault_score = 0; 
 
 /*電流値　単位はアンペア*/
 volatile float current_u = 0.0f;
@@ -279,13 +285,37 @@ static uint16_t spi_transfer_16(uint16_t tx)
    return rx;
 }
 
+static uint16_t as5047p_read_raw16(void)
+{
+    spi_transfer_16(0xFFFF);          // ダミー
+    return spi_transfer_16(0xC000);   // 角度コマンド、生の16bitをそのまま返す
+}
+
+// bit15がパリティビット(偶数パリティ)。16bit全体のXORが0なら正常。
+static uint8_t as5047p_parity_bad(uint16_t frame)
+{
+    uint16_t v = frame;
+    v ^= v >> 8; v ^= v >> 4; v ^= v >> 2; v ^= v >> 1;
+    return (v & 1);
+}
+
+uint16_t as5047p_read_angle_checked(uint8_t *fault_out)
+{
+    uint16_t frame = as5047p_read_raw16();
+    uint8_t bad = 0;
+
+    if (as5047p_parity_bad(frame)) bad = 1;   // 通信エラー(パリティ不一致)
+    if (frame & 0x4000)            bad = 1;   // AS5047PのEFビット(内部エラー、0xFFFFもここで捕捉される)
+
+    *fault_out = bad;
+    return frame & 0x3FFF;
+}
+
+// 既存コードとの互換用
 uint16_t as5047p_read_angle(void)
 {
-
-    spi_transfer_16(0xFFFF);   // 1回目に返ってくるデータはゴミ      
-    uint16_t raw = spi_transfer_16(0xC000); // 2回目には何もしない空データを送り、その隙に1回目で要求したデータを受け取る
-    return raw & 0x3FFF;    // 余計なビットを消して、純粋な14ビットデータにする    
-
+    uint8_t dummy;
+    return as5047p_read_angle_checked(&dummy);
 }
 
 int _write(int file, char *ptr, int len)
@@ -333,7 +363,28 @@ void update_openloop(float voltage)
     static int speed_calc_cnt = 0;
     static uint16_t angle_at_last_calc = 0;
 
-    angle_raw = as5047p_read_angle();
+    uint8_t enc_bad = 0;
+    angle_raw = as5047p_read_angle_checked(&enc_bad);
+
+    /* リーキーバケット: 異常で+1、正常で-1。単発ノイズでは閾値に届きにくい */
+    if (enc_bad) {
+        if (encoder_fault_score < ENCODER_FAULT_SCORE_MAX) encoder_fault_score++;
+    } else {
+        if (encoder_fault_score > 0) encoder_fault_score--;
+    }
+
+    if (encoder_fault_score >= ENCODER_FAULT_THRESHOLD && !encoder_fault) {
+        encoder_fault = 1;
+        set_pwm(0.5f, 0.5f, 0.5f);
+        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+    }
+
+    if (enc_bad || encoder_fault) return;
 
     float angle_mech = ((float)angle_raw / 16384.0f) * 2.0f * M_PI;
     static float motor_direction = 1.0f;
@@ -389,14 +440,7 @@ void update_openloop(float voltage)
     /*意味ない*/
     electrical_direction += step_move;
     if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
-    /*ここまで*/
-    // static int dbg_cnt = 0;
-    // if (++dbg_cnt >= 50) {
-    // dbg_cnt = 0;
-    // printf("mode=%d vd=%d vq=%d elec_dir=%d enc=%u speed=%d\r\n",
-    //    control_motor_mode[0], (int)(vd*1000), (int)(vq*1000),
-    //    (int)(electrical_direction*1000), angle_raw, (int)motor[0].speed);
-    //}
+    
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -416,8 +460,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         if (amp < 0.05f) amp += 0.0000001f;               // トルク
         /*ここまで*/
 
-        if (overcurrent_fault) {
-            return;
+
+        if (overcurrent_fault || encoder_fault) {
+        return;
         }
 
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
@@ -616,10 +661,7 @@ void test_openloop_spin_veryslow(void)
 
     uint16_t enc = as5047p_read_angle();
     static int log_cnt = 0;
-    // if (++log_cnt >= 50) {
-    //     log_cnt = 0;
-    //     //printf("cmd_elec=%d enc=%u\r\n", (int)(test_angle*1000), enc);
-    // }
+
 }
 
 static uint32_t calib_simple_crc(uint32_t magic, float val)
@@ -730,7 +772,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=0.0;
+    motor[i].speed_target=300.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -986,6 +1028,7 @@ int main(void)
    (int)motor[0].speed, angle_raw,
    overcurrent_fault,
    (int)(current_u*1000), (int)(current_v*1000), (int)(current_w*1000));
+   printf("encoder_fault=%d encoder_fault_score=%d", encoder_fault, encoder_fault_score);
   }
   /* USER CODE END 3 */
 }
