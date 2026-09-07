@@ -155,16 +155,9 @@ uint32_t offset_w = 2048;
 
 volatile int cutoff;
 static float electrical_direction = 0.0f;   
-static float step_move = 0.01f;      //使っていないが残している
-static float amp = 0.05f;           // 出力の大きさを調整できる
 static float zero_offset_rad = 0.0f;  //初期位置のずれを確認する
 
-/*while表示用*/
-uint16_t diag;
-float angle_deg;
 uint16_t angle_raw;
-float speed_rpm;
-int32_t speed_rpm_int;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -193,6 +186,11 @@ void measure_current(void);
 static void FDCAN1_ConfigFilterAndStart(void);
 static int calib_load(float *zero_offset_rad_out);
 static HAL_StatusTypeDef calib_save(float zero_offset_rad_val);
+void set_pwm(float ua, float ub, float uc);
+static void motor_emergency_stop(void);
+static HAL_StatusTypeDef stspin_write_reg(uint8_t reg, uint8_t val);
+static HAL_StatusTypeDef stspin_read_reg(uint8_t reg, uint8_t *val);
+static uint8_t stspin_clear_faults(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -321,6 +319,17 @@ uint16_t as5047p_read_angle_checked(uint8_t *fault_out)
     return frame & 0x3FFF;
 }
 
+static void motor_emergency_stop(void)
+{
+    set_pwm(0.5f, 0.5f, 0.5f);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+    HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+    HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+    HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+}
+
 // 既存コードとの互換用
 uint16_t as5047p_read_angle(void)
 {
@@ -373,13 +382,7 @@ void update_openloop(float voltage)
 
     if (encoder_fault_score >= ENCODER_FAULT_THRESHOLD && !encoder_fault) {
         encoder_fault = 1;
-        set_pwm(0.5f, 0.5f, 0.5f);
-        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
-        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-        HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+        motor_emergency_stop();
     }
 
     if (enc_bad || encoder_fault) return;
@@ -435,10 +438,6 @@ void update_openloop(float voltage)
     float offset = 0.5f;
     set_pwm(u + offset, v + offset, w + offset);
     
-    /*意味ない*/
-    electrical_direction += step_move;
-    if (electrical_direction > 2.0f * M_PI) electrical_direction -= 2.0f * M_PI;
-    
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -447,18 +446,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM2)
     {
         tim2_cnt++;
-        /*意味ないここから(この部分があるからとはいえプログラムに変化はない)*/
-        static uint32_t cnt = 0;
         
-        if (++cnt >= 5000) {
-          cnt = 0;
-        }
-       
-        if (step_move < 0.010f) step_move +=  0.00001f;  // 速度
-        if (amp < 0.05f) amp += 0.0000001f;               // トルク
-        /*ここまで*/
-
-
         if (overcurrent_fault || encoder_fault) {
         return;
         }
@@ -620,18 +608,10 @@ void measure_current(void) {
        fabsf(current_w) > MAX_PHASE_CURRENT_A))
   {
       overcurrent_fault = 1;
-
-      set_pwm(0.5f, 0.5f, 0.5f);   // デューティ50%(=出力ゼロ)にしてから停止
-
-      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
-      HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-      HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+      motor_emergency_stop();
   }
 
-  // Clarke変換 (u,v,w → alpha,beta)
+  // Clarke変換
   float i_alpha = current_u;
   float i_beta  = (current_u + 2.0f * current_v) * 0.57735f;
 
@@ -647,7 +627,7 @@ void test_openloop_spin_veryslow(void)
     static float test_angle = 0.0f;
     float test_vq = 0.15f;
 
-    test_angle += 0.0002f; // 0.0008 → 0.0002 にさらに減速(約1/4)
+    test_angle += 0.0002f; 
     if (test_angle > 2.0f*M_PI) test_angle -= 2.0f*M_PI;
 
     float va = -test_vq * fast_sin(test_angle);
@@ -975,24 +955,7 @@ int main(void)
 
     //printf("speed=%d rpm, target=%d rpm\r\n",(int32_t)motor[0].speed,(int32_t)motor[0].speed_target);
     //uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
-    //HAL_Delay(200);
-
-    // spi_transfer_16(0xFFFC | 0x4000);   //1回目のごみ
-    // diag = spi_transfer_16(0xC000);  //0xc000でエラー確認
-    // printf("DIAG=0x%04X ", diag);
-    // angle_raw = as5047p_read_angle();   //角度取得
-    // angle_deg = angle_raw * 360.0f / 16384.0f; 
-    // printf("RAW=%u (%.1f deg) ", angle_raw, angle_deg);
-    // int16_t diff = (int16_t)angle_raw - (int16_t)prev_angle_raw;
-    // if (diff > 8192)  diff -= 16384; // 逆回転時の跨ぎ補正
-    // if (diff < -8192) diff += 16384; // 正回転時の跨ぎ補正
-    // prev_angle_raw = angle_raw;
-    // float speed_rpm = ((float)diff / 16384.0f) / 0.2f * 60.0f;
-    // printf("speed=%d rpm\r\n", (int32_t)speed_rpm);
-    
-    // fflush(stdout);
-    // HAL_Delay(200);
-    
+    //HAL_Delay(200);    
     // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
     // printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
