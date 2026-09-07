@@ -61,7 +61,19 @@ typedef struct {
 
 pid_items motor[3];
 
-volatile int cutoff;
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    float    zero_offset_rad;
+    uint32_t crc;
+} calib_data_t;
+
+typedef struct __attribute__((packed)) {
+    float   speed_target;         /* byte0-3 */
+    uint8_t pid_mode;             /* byte4: 0=locate_pid, 1=speed_pid */
+    uint8_t control_motor_mode;   /* byte5: 0=電圧制御, 1=電流制御 */
+    uint8_t reserved[2];          /* byte6-7 */
+} can_motor_cmd_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -69,11 +81,20 @@ volatile int cutoff;
 #define CALIB_FLASH_ADDR   0x0801F800u
 #define CALIB_MAGIC        0xCA11B0A1u
 
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    float    zero_offset_rad;
-    uint32_t crc;
-} calib_data_t;
+#define STSPIN_I2C_ADDR   (0x47 << 1)   // I2Cのスレーブアドレスには7bitアドレスと8bitアドレスがあり、アドレスの後ろに読み込みか書き込みかを示す1bit（R/Wビット）がくっついて送信される。
+#define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
+#define POLE_PAIRS 7         //モーターの外側についている磁石の数
+#define clock_time 0.0002    //time一回当たりの周期
+#define resistance_for_current 0.001   //電流計測に用いる抵抗値
+#define opamp_gain 16.0  //cudemxで設定したPGAgainの値
+#define MAX_PHASE_CURRENT_A   7.0f
+#define drive_voltage 3.3  //マイコンの駆動電圧
+
+#define ENCODER_FAULT_THRESHOLD   30   // スコアがここまで貯まったら停止
+#define ENCODER_FAULT_SCORE_MAX   30   // スコアの上限
+
+#define CAN_MOTOR_CMD_BASE_ID  0x302u
+#define CAN_MOTOR_NUM          3u
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -106,42 +127,6 @@ TIM_HandleTypeDef htim17;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
-#define STSPIN_I2C_ADDR   (0x47 << 1)   // I2Cのスレーブアドレスには7bitアドレスと8bitアドレスがあり、アドレスの後ろに読み込みか書き込みかを示す1bit（R/Wビット）がくっついて送信される。
-
-static HAL_StatusTypeDef stspin_write_reg(uint8_t reg, uint8_t val)
-{
-    return HAL_I2C_Mem_Write(&hi2c3, STSPIN_I2C_ADDR, reg,
-                              I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
-}
-
-static HAL_StatusTypeDef stspin_read_reg(uint8_t reg, uint8_t *val)
-{
-    return HAL_I2C_Mem_Read(&hi2c3, STSPIN_I2C_ADDR, reg,
-                             I2C_MEMADD_SIZE_8BIT, val, 1, 100);
-}
-
-// STATUSレジスタ(0x80)を読み、フォルトがあればCLEAR(0x09)に0xFFを書く
-static uint8_t stspin_clear_faults(void)
-{
-    uint8_t status = 0;
-    stspin_read_reg(0x80, &status);
-    if (status & 0x0F) {          // もしstatusの下位4bitの中に1があり、エラーがある場合はifが通る
-        stspin_write_reg(0x09, 0xFF);  // CLEARレジスタ
-    }
-    return status;
-}
-
-#define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
-#define POLE_PAIRS 7         //モーターの外側についている磁石の数
-#define clock_time 0.0002    //time一回当たりの周期
-#define resistance_for_current 0.001   //電流計測に用いる抵抗値
-#define opamp_gain 16.0  //cudemxで設定したPGAgainの値
-#define MAX_PHASE_CURRENT_A   7.0f
-#define drive_voltage 3.3  //マイコンの駆動電圧
-#define ENCODER_FAULT_THRESHOLD   30   // スコアがここまで貯まったら停止
-#define ENCODER_FAULT_SCORE_MAX   30   // スコアの上限
-
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
@@ -168,16 +153,18 @@ uint32_t offset_u = 2048;
 uint32_t offset_v = 2048;
 uint32_t offset_w = 2048;
 
-#define CAN_MOTOR_CMD_BASE_ID  0x302u
-#define CAN_MOTOR_NUM          3u
+volatile int cutoff;
+static float electrical_direction = 0.0f;   
+static float step_move = 0.01f;      //使っていないが残している
+static float amp = 0.05f;           // 出力の大きさを調整できる
+static float zero_offset_rad = 0.0f;  //初期位置のずれを確認する
 
-typedef struct __attribute__((packed)) {
-    float   speed_target;         /* byte0-3 */
-    uint8_t pid_mode;             /* byte4: 0=locate_pid, 1=speed_pid */
-    uint8_t control_motor_mode;   /* byte5: 0=電圧制御, 1=電流制御 */
-    uint8_t reserved[2];          /* byte6-7 */
-} can_motor_cmd_t;
-
+/*while表示用*/
+uint16_t diag;
+float angle_deg;
+uint16_t angle_raw;
+float speed_rpm;
+int32_t speed_rpm_int;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -210,6 +197,29 @@ static HAL_StatusTypeDef calib_save(float zero_offset_rad_val);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static HAL_StatusTypeDef stspin_write_reg(uint8_t reg, uint8_t val)
+{
+    return HAL_I2C_Mem_Write(&hi2c3, STSPIN_I2C_ADDR, reg,
+                              I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+}
+
+static HAL_StatusTypeDef stspin_read_reg(uint8_t reg, uint8_t *val)
+{
+    return HAL_I2C_Mem_Read(&hi2c3, STSPIN_I2C_ADDR, reg,
+                             I2C_MEMADD_SIZE_8BIT, val, 1, 100);
+}
+
+// STATUSレジスタ(0x80)を読み、フォルトがあればCLEAR(0x09)に0xFFを書く
+static uint8_t stspin_clear_faults(void)
+{
+    uint8_t status = 0;
+    stspin_read_reg(0x80, &status);
+    if (status & 0x0F) {          // もしstatusの下位4bitの中に1があり、エラーがある場合はifが通る
+        stspin_write_reg(0x09, 0xFF);  // CLEARレジスタ
+    }
+    return status;
+}
+
 
 static void FDCAN1_ConfigFilterAndStart(void)
 {
@@ -342,18 +352,6 @@ void set_pwm(float ua, float ub, float uc)
     TIM1->CCR2 = (uint32_t)(ub * PWM_PERIOD);
     TIM1->CCR3 = (uint32_t)(uc * PWM_PERIOD);
 }
-
-static float electrical_direction = 0.0f;   
-static float step_move = 0.01f;      //使っていないが残している
-static float amp = 0.05f;           // 出力の大きさを調整できる
-static float zero_offset_rad = 0.0f;  //初期位置のずれを確認する
-
-/*while表示用*/
-uint16_t diag;
-float angle_deg;
-uint16_t angle_raw;
-float speed_rpm;
-int32_t speed_rpm_int;
 
 void update_openloop(float voltage)
 {
@@ -772,7 +770,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=300.0;
+    motor[i].speed_target=150.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
