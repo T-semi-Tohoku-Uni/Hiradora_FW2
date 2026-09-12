@@ -69,8 +69,8 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     float   speed_target;               /* byte0-3 */
-    uint8_t pid_mode;                   /* byte4: 0=locate_pid, 1=speed_pid */
-    uint8_t control_motor_mode;         /* byte5: 0=電圧制御, 1=電流制御 */
+    uint8_t pid_mode;                   /* byte4: 0=locate_pid, 1=speed_pid 1ではなぜか上手くいかないので0を用いて*/
+    uint8_t control_motor_mode;         /* byte5: 0=電圧制御, 1=電流制御 基本的に0を用いて*/
     uint8_t reserved[2];                /* byte6-7 */
 } can_motor_cmd_t;
 
@@ -274,7 +274,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
     if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
 
-    /* 0x301/0x302/0x303どれで来ても、motor[0] */
+    /* 0x301/0x302/0x303どれで来ても、motor[0]で固定している。使用するロボットでは別々の基盤にcanで送信して動かすため */
     motor[0].speed_target       = cmd.speed_target;
     pid_mode[0]                 = cmd.pid_mode ? 1 : 0;
     control_motor_mode[0]       = cmd.control_motor_mode ? 1 : 0;
