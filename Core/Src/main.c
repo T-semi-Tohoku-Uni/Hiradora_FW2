@@ -68,10 +68,10 @@ typedef struct __attribute__((packed)) {
 } calib_data_t;
 
 typedef struct __attribute__((packed)) {
-    float   speed_target;         /* byte0-3 */
-    uint8_t pid_mode;             /* byte4: 0=locate_pid, 1=speed_pid */
-    uint8_t control_motor_mode;   /* byte5: 0=電圧制御, 1=電流制御 */
-    uint8_t reserved[2];          /* byte6-7 */
+    float   speed_target;               /* byte0-3 */
+    uint8_t pid_mode;                   /* byte4: 0=locate_pid, 1=speed_pid */
+    uint8_t control_motor_mode;         /* byte5: 0=電圧制御, 1=電流制御 */
+    uint8_t reserved[2];                /* byte6-7 */
 } can_motor_cmd_t;
 
 /* USER CODE END PTD */
@@ -82,16 +82,16 @@ typedef struct __attribute__((packed)) {
 #define CALIB_MAGIC        0xCA11B0A1u
 
 #define STSPIN_I2C_ADDR   (0x47 << 1)   // I2Cのスレーブアドレスには7bitアドレスと8bitアドレスがあり、アドレスの後ろに読み込みか書き込みかを示す1bit（R/Wビット）がくっついて送信される。
-#define PWM_PERIOD 3999      //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
-#define POLE_PAIRS 7         //モーターの外側についている磁石の数
-#define clock_time 0.0002    //time一回当たりの周期
-#define resistance_for_current 0.001   //電流計測に用いる抵抗値
-#define opamp_gain 16.0  //cudemxで設定したPGAgainの値
+#define PWM_PERIOD 3999                 //カウンターがどこまで数えたら 0 に戻るかを決める天井の数値       
+#define POLE_PAIRS 7                    //モーターの外側についている磁石の数
+#define clock_time 0.0002    
+#define resistance_for_current 0.001    //電流計測に用いる抵抗値
+#define opamp_gain 16.0                 //cudemxで設定した値
 #define MAX_PHASE_CURRENT_A   7.0f
-#define drive_voltage 3.3  //マイコンの駆動電圧
+#define drive_voltage 3.3               //マイコンの駆動電圧
 
-#define ENCODER_FAULT_THRESHOLD   30   // スコアがここまで貯まったら停止
-#define ENCODER_FAULT_SCORE_MAX   30   // スコアの上限
+#define ENCODER_FAULT_THRESHOLD   30    // スコアがここまで貯まったら停止
+#define ENCODER_FAULT_SCORE_MAX   30    // スコアの上限
 
 #define CAN_MOTOR_CMD_BASE_ID  0x302u
 #define CAN_MOTOR_NUM          3u
@@ -130,8 +130,8 @@ UART_HandleTypeDef huart1;
 static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
-volatile int pid_mode[3] = {0, 0, 0};   //0ならlocate_pid 1ならspeed_pid
-volatile int control_motor_mode[3] = {0, 0, 0};       //モーターの制御モード
+volatile int pid_mode[3] = {0, 0, 0};             //0ならlocate_pid 1ならspeed_pid
+volatile int control_motor_mode[3] = {0, 0, 0};   //モーターの制御モード
 
 volatile uint32_t rx_ok_count = 0;
 static volatile uint32_t tim2_cnt = 0;
@@ -212,8 +212,8 @@ static uint8_t stspin_clear_faults(void)
 {
     uint8_t status = 0;
     stspin_read_reg(0x80, &status);
-    if (status & 0x0F) {          // もしstatusの下位4bitの中に1があり、エラーがある場合はifが通る
-        stspin_write_reg(0x09, 0xFF);  // CLEARレジスタ
+    if (status & 0x0F) {                       // もしstatusの下位4bitの中に1があり、エラーがある場合はifが通る
+        stspin_write_reg(0x09, 0xFF); // CLEARレジスタ
     }
     return status;
 }
@@ -891,10 +891,8 @@ int main(void)
       printf("step11: calibration loaded from flash, zero_offset_rad=%d\r\n",
              (int)(zero_offset_rad * 1000));
   } else {
-      set_pwm(0.58f, 0.46f, 0.46f);
-      HAL_Delay(1000); // U相に電圧をかけてモータを「0度」に強制ロック
-               // 1秒待って完全に静止させる
-      // その位置を「ゼロ点ズレ」として記憶
+      set_pwm(0.58f, 0.46f, 0.46f);  // U相に電圧をかけてモータを0度に強制ロック
+      HAL_Delay(1000);                   // 1秒待って完全に静止させる、その位置を0点として記憶
       zero_offset_rad = ((float)as5047p_read_angle() / 16384.0f) * 2.0f * M_PI;
 
       if (calib_save(zero_offset_rad) == HAL_OK) {
@@ -935,7 +933,7 @@ int main(void)
   while (1)
   {
     static uint32_t fault_check_cnt = 0;
-    if (++fault_check_cnt >= 5) {   // 200ms×5=1秒ごとくらいでもOK。もっと頻繁でも良い
+    if (++fault_check_cnt >= 5) {   // 200ms×5=1秒
         fault_check_cnt = 0;
         uint8_t st = stspin_clear_faults();
         if (st & 0x04) {
@@ -972,7 +970,7 @@ int main(void)
         if (st & 0x08) printf("Device RESET detected! cleared.\r\n");
     }
 
-    /* ★ 追加: CAN受信状況を表示 */
+    /* CAN受信状況を表示 */
     FDCAN_ProtocolStatusTypeDef pstatus;
     FDCAN_ErrorCountersTypeDef  ecounters;
     HAL_FDCAN_GetProtocolStatus(&hfdcan1, &pstatus);
