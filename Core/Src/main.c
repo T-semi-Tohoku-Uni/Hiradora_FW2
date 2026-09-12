@@ -274,7 +274,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if (cmd.speed_target > 5000.0f)  cmd.speed_target = 5000.0f;
     if (cmd.speed_target < -5000.0f) cmd.speed_target = -5000.0f;
 
-    /* 0x301/0x302/0x303どれで来ても、この基板はmotor[0]固定 */
+    /* 0x301/0x302/0x303どれで来ても、motor[0] */
     motor[0].speed_target       = cmd.speed_target;
     pid_mode[0]                 = cmd.pid_mode ? 1 : 0;
     control_motor_mode[0]       = cmd.control_motor_mode ? 1 : 0;
@@ -637,9 +637,6 @@ void test_openloop_spin_veryslow(void)
     float w = -0.5f*va - 0.866f*vb;
     set_pwm(u+0.5f, v+0.5f, w+0.5f);
 
-    uint16_t enc = as5047p_read_angle();
-    static int log_cnt = 0;
-
 }
 
 static uint32_t calib_simple_crc(uint32_t magic, float val)
@@ -954,7 +951,6 @@ int main(void)
     //printf("speed=%d rpm, target=%d rpm\r\n",(int32_t)motor[0].speed,(int32_t)motor[0].speed_target);
     //uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
     //HAL_Delay(200);    
-    // すべて整数(%u や %d)で安全に出力
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
     // printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
     // (int)(motor[0].speed), 
