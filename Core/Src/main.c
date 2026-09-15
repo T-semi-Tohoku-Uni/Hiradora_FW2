@@ -93,7 +93,7 @@ typedef struct __attribute__((packed)) {
 #define ENCODER_FAULT_THRESHOLD   30    // スコアがここまで貯まったら停止
 #define ENCODER_FAULT_SCORE_MAX   30    // スコアの上限
 
-#define CAN_MOTOR_CMD_BASE_ID  0x302u
+#define CAN_MOTOR_CMD_BASE_ID  0x301u
 #define CAN_MOTOR_NUM          3u
 /* USER CODE END PD */
 
@@ -131,7 +131,7 @@ static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
 volatile int pid_mode[3] = {0, 0, 0};             //0ならlocate_pid 1ならspeed_pid
-volatile int control_motor_mode[3] = {1, 1, 1};   //モーターの制御モード
+volatile int control_motor_mode[3] = {0, 0, 0};   //モーターの制御モード
 
 volatile uint32_t rx_ok_count = 0;
 static volatile uint32_t tim2_cnt = 0;
@@ -448,7 +448,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         tim2_cnt++;
         
         if (overcurrent_fault || encoder_fault) {
-        return;
+          return;
         }
 
         /*最初電流差でがたがたいうので速度目標を少しずつ上げることで回避したい*/
@@ -707,6 +707,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -927,8 +928,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+  while (1) {
     static uint32_t fault_check_cnt = 0;
     if (++fault_check_cnt >= 5) {   // 200ms×5=1秒
         fault_check_cnt = 0;
@@ -976,14 +976,14 @@ int main(void)
     }
     HAL_FDCAN_GetErrorCounters(&hfdcan1, &ecounters);
     printf("rx_ok=%lu BusOff=%d ErrPassive=%d TEC=%lu REC=%lu target=%d tim2_cnt=%d pid_mode=%d ctrl_mode=%d speed=%d angle=%u OC_FAULT=%d I_U=%d I_V=%d I_W=%d\r\n",
-   rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
-   (unsigned long)ecounters.TxErrorCnt, (unsigned long)ecounters.RxErrorCnt,
-   (int)motor[0].speed_target, tim2_cnt,
-   pid_mode[0], control_motor_mode[0],
-   (int)motor[0].speed, angle_raw,
-   overcurrent_fault,
-   (int)(current_u*1000), (int)(current_v*1000), (int)(current_w*1000));
-   printf("encoder_fault=%d encoder_fault_score=%d", encoder_fault, encoder_fault_score);
+    rx_ok_count, pstatus.BusOff, pstatus.ErrorPassive,
+    (unsigned long)ecounters.TxErrorCnt, (unsigned long)ecounters.RxErrorCnt,
+    (int)motor[0].speed_target, tim2_cnt,
+    pid_mode[0], control_motor_mode[0],
+    (int)motor[0].speed, angle_raw,
+    overcurrent_fault,
+    (int)(current_u*1000), (int)(current_v*1000), (int)(current_w*1000));
+    printf("encoder_fault=%d encoder_fault_score=%d", encoder_fault, encoder_fault_score);
   }
   /* USER CODE END 3 */
 }
