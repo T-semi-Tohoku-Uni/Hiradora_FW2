@@ -87,7 +87,7 @@ typedef struct __attribute__((packed)) {
 #define clock_time 0.0002    
 #define resistance_for_current 0.001    //電流計測に用いる抵抗値
 #define opamp_gain 16.0                 //cudemxで設定した値
-#define MAX_PHASE_CURRENT_A   7.0f
+#define MAX_PHASE_CURRENT_A   30.0f
 #define drive_voltage 3.3               //マイコンの駆動電圧
 
 #define ENCODER_FAULT_THRESHOLD   30    // スコアがここまで貯まったら停止
@@ -131,7 +131,7 @@ static inline float fast_sin(float x) { return sinf(x); }
 static inline float fast_cos(float x) { return cosf(x); }
 
 volatile int pid_mode[3] = {0, 0, 0};             //0ならlocate_pid 1ならspeed_pid
-volatile int control_motor_mode[3] = {0, 0, 0};   //モーターの制御モード
+volatile int control_motor_mode[3] = {1, 1, 1};   //モーターの制御モード
 
 volatile uint32_t rx_ok_count = 0;
 static volatile uint32_t tim2_cnt = 0;
@@ -511,7 +511,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
         update_openloop(voltage);  
 
-        //measure_current();   //電流測定
+        measure_current();   //電流測定
     }
 }
 
@@ -747,7 +747,7 @@ int main(void)
   printf("step1: peripherals init done\r\n");
   for(int i=0;i<3;i++){
     motor[i].speed=0.0;
-    motor[i].speed_target=150.0;
+    motor[i].speed_target=0.0;
     if (pid_mode[i] == 0) {
       //n2830
       //motor[i].p=37.0;
@@ -952,13 +952,13 @@ int main(void)
     //uint32_t display_deg = (uint32_t)((float)angle_raw * 360.0f / 16384.0f);
     //HAL_Delay(200);    
     //printf("RAW=%u (%u deg)\r\n", angle_raw, display_deg);
-    // printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
-    // (int)(motor[0].speed), 
-    // (int)(current_u * 1000000),  // μA単位
-    // (int)(current_v * 1000000), 
-    // (int)(current_w * 1000000));
-    // fflush(stdout);
-    // HAL_Delay(200);
+    printf("spd=%d I_U=%d I_V=%d I_W=%d\n", 
+    (int)(motor[0].speed), 
+    (int)(current_u * 1000000),  // μA単位
+    (int)(current_v * 1000000), 
+    (int)(current_w * 1000000));
+    fflush(stdout);
+    HAL_Delay(200);
     if (++fault_check_cnt >= 5) {
         fault_check_cnt = 0;
         uint8_t st = stspin_clear_faults();
